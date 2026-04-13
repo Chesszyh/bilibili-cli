@@ -1,6 +1,6 @@
 ---
 name: bilibili-cli
-description: CLI skill for Bilibili (哔哩哔哩, B站) with token-efficient YAML output for AI agents to browse videos, users, search, trending, dynamics, favorites, and interactions from the terminal
+description: CLI skill for Bilibili (哔哩哔哩, B站) with token-efficient YAML output for AI agents to browse videos, download media, search, trending, dynamics, favorites, and interactions from the terminal
 author: jackwener
 version: "0.6.2"
 tags:
@@ -14,7 +14,7 @@ tags:
 
 # bilibili-cli Skill
 
-A CLI tool for interacting with Bilibili (哔哩哔哩). Use it to fetch video info, search content, browse user profiles, and perform interactions like liking or triple-clicking.
+A CLI tool for interacting with Bilibili (哔哩哔哩). Use it to fetch video info, download media files, search content, browse user profiles, and perform interactions like liking or triple-clicking.
 
 ## Agent Defaults
 
@@ -26,6 +26,7 @@ When you need machine-readable output:
 4. Prefer specific commands over broad ones. Example: use `bili user-videos 946974 --max 3 --yaml` instead of fetching large timelines.
 5. When summarizing a video, fetch subtitles first. Subtitles usually contain the video's core content and are the best primary source for summaries.
 6. Only fall back to `--ai`, comments, or audio extraction when subtitles are unavailable or clearly insufficient.
+7. When the user needs the media file itself, prefer `bili download` over `bili audio`.
 
 ## Prerequisites
 
@@ -37,6 +38,9 @@ uv tool install bilibili-cli
 # If you need audio extraction support (requires PyAV)
 uv tool install "bilibili-cli[audio]"
 # Or: pipx install "bilibili-cli[audio]"
+
+# If you need video download support for DASH streams
+ffmpeg -version
 
 # Upgrade to latest (recommended to avoid API errors)
 uv tool upgrade bilibili-cli
@@ -72,6 +76,22 @@ bili video BV1ABcsztEcY --comments      # Show top comments
 bili video BV1ABcsztEcY --related       # Show related videos
 bili video BV1ABcsztEcY --yaml          # Token-efficient YAML output
 bili video BV1ABcsztEcY --json          # Structured JSON envelope
+```
+
+### Video Download
+
+Requires a local `ffmpeg` binary for DASH remux.
+
+```bash
+# Download the best available video stream (accepts BV ID or full URL)
+bili download BV1ABcsztEcY
+bili download https://www.bilibili.com/video/BV1ABcsztEcY
+
+# Options
+bili download BV1ABcsztEcY --container mp4   # Output mp4 instead of mkv
+bili download BV1ABcsztEcY --page 2          # Download page 2 for multi-part videos
+bili download BV1ABcsztEcY --keep-raw        # Keep raw DASH audio/video files
+bili download BV1ABcsztEcY -o ~/Videos/      # Custom output directory or file path
 ```
 
 ### User
@@ -192,6 +212,9 @@ bili video BV1ABcsztEcY --ai
 # Get comments for sentiment analysis
 bili video BV1ABcsztEcY --comments
 
+# Download the original media file when needed
+bili download BV1ABcsztEcY
+
 # Extract audio for speech-to-text (ASR)
 # Segments are saved to /tmp/bilibili-cli/{title}/seg_000.wav, seg_001.wav, ...
 bili audio BV1ABcsztEcY --segment 25
@@ -218,10 +241,13 @@ bili video BV1xxx --subtitle
 # 3. If subtitles are missing or incomplete, try AI summary
 bili video BV1xxx --ai
 
-# 4. If there is still not enough content, extract audio for ASR
+# 4. If the user needs the media file itself, download the video
+bili download BV1xxx
+
+# 5. If there is still not enough content, extract audio for ASR
 bili audio BV1xxx --segment 25
 
-# 5. Get comments for audience reaction
+# 6. Get comments for audience reaction
 bili video BV1xxx --comments
 ```
 

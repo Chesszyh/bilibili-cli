@@ -1,6 +1,8 @@
 """Tests for CLI commands using Click CliRunner."""
 
 import json
+import os
+import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -257,6 +259,140 @@ def test_video_api_error_returns_nonzero(runner):
         result = runner.invoke(cli, ["video", "BV1test123"])
         assert result.exit_code != 0
         assert "获取视频信息失败" in result.output
+
+
+def test_download_progressive_saves_native_extension(runner):
+    async def fake_download(_url, output_path):
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "wb") as f:
+            f.write(b"video")
+        return 5
+
+    info = {"title": "Test Video", "duration": 120}
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("bili_cli.commands.common.get_credential", return_value=None), \
+             patch("bili_cli.client.extract_bvid", return_value="BV1test123"), \
+             patch("bili_cli.client.get_video_info", new_callable=AsyncMock, return_value=info), \
+             patch(
+                 "bili_cli.client.get_video_download_streams",
+                 new_callable=AsyncMock,
+                 return_value={"kind": "progressive", "url": "https://example.com/full.mp4", "ext": ".mp4"},
+             ), \
+             patch("bili_cli.client.download_stream", new_callable=AsyncMock, side_effect=fake_download):
+            result = runner.invoke(cli, ["download", "BV1test123", "-o", tmpdir])
+
+        assert result.exit_code == 0
+        assert "视频已保存" in result.output
+        assert os.path.exists(os.path.join(tmpdir, "Test Video.mp4"))
+
+
+def test_download_dash_merges_streams(runner):
+    async def fake_download(_url, output_path):
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "wb") as f:
+            f.write(b"raw")
+        return 3
+
+    def fake_merge(video_path, audio_path, output_path):
+        assert os.path.exists(video_path)
+        assert os.path.exists(audio_path)
+        with open(output_path, "wb") as f:
+            f.write(b"merged")
+
+    info = {"title": "Test Video", "duration": 120}
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("bili_cli.commands.common.get_credential", return_value=None), \
+             patch("bili_cli.client.extract_bvid", return_value="BV1test123"), \
+             patch("bili_cli.client.get_video_info", new_callable=AsyncMock, return_value=info), \
+             patch(
+                 "bili_cli.client.get_video_download_streams",
+                 new_callable=AsyncMock,
+                 return_value={
+                     "kind": "dash",
+                     "video_url": "https://example.com/video.m4s",
+                     "audio_url": "https://example.com/audio.m4s",
+                     "video_ext": ".m4s",
+                     "audio_ext": ".m4s",
+                 },
+             ), \
+             patch("bili_cli.client.download_stream", new_callable=AsyncMock, side_effect=fake_download), \
+             patch("bili_cli.client.merge_streams_ffmpeg", side_effect=fake_merge) as mock_merge:
+            result = runner.invoke(cli, ["download", "BV1test123", "-o", tmpdir])
+
+            assert result.exit_code == 0
+            mock_merge.assert_called_once()
+            assert os.path.exists(os.path.join(tmpdir, "Test Video.mkv"))
+
+
+def test_download_keep_raw_preserves_intermediate_files(runner):
+    async def fake_download(_url, output_path):
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "wb") as f:
+            f.write(b"raw")
+        return 3
+
+    captured = {}
+
+    def fake_merge(video_path, audio_path, output_path):
+        captured["video_path"] = video_path
+        captured["audio_path"] = audio_path
+        with open(output_path, "wb") as f:
+            f.write(b"merged")
+
+    info = {"title": "Test Video", "duration": 120}
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("bili_cli.commands.common.get_credential", return_value=None), \
+             patch("bili_cli.client.extract_bvid", return_value="BV1test123"), \
+             patch("bili_cli.client.get_video_info", new_callable=AsyncMock, return_value=info), \
+             patch(
+                 "bili_cli.client.get_video_download_streams",
+                 new_callable=AsyncMock,
+                 return_value={
+                     "kind": "dash",
+                     "video_url": "https://example.com/video.m4s",
+                     "audio_url": "https://example.com/audio.m4s",
+                     "video_ext": ".m4s",
+                     "audio_ext": ".m4s",
+                 },
+             ), \
+             patch("bili_cli.client.download_stream", new_callable=AsyncMock, side_effect=fake_download), \
+             patch("bili_cli.client.merge_streams_ffmpeg", side_effect=fake_merge):
+            result = runner.invoke(cli, ["download", "BV1test123", "-o", tmpdir, "--keep-raw"])
+
+        assert result.exit_code == 0
+        assert os.path.exists(captured["video_path"])
+        assert os.path.exists(captured["audio_path"])
+
+
+def test_download_merge_failure_returns_nonzero(runner):
+    async def fake_download(_url, output_path):
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "wb") as f:
+            f.write(b"raw")
+        return 3
+
+    info = {"title": "Test Video", "duration": 120}
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("bili_cli.commands.common.get_credential", return_value=None), \
+             patch("bili_cli.client.extract_bvid", return_value="BV1test123"), \
+             patch("bili_cli.client.get_video_info", new_callable=AsyncMock, return_value=info), \
+             patch(
+                 "bili_cli.client.get_video_download_streams",
+                 new_callable=AsyncMock,
+                 return_value={
+                     "kind": "dash",
+                     "video_url": "https://example.com/video.m4s",
+                     "audio_url": "https://example.com/audio.m4s",
+                     "video_ext": ".m4s",
+                     "audio_ext": ".m4s",
+                 },
+             ), \
+             patch("bili_cli.client.download_stream", new_callable=AsyncMock, side_effect=fake_download), \
+             patch("bili_cli.client.merge_streams_ffmpeg", side_effect=Exception("ffmpeg failed")):
+            result = runner.invoke(cli, ["download", "BV1test123", "-o", tmpdir])
+
+    assert result.exit_code != 0
+    assert "合并视频" in result.output
 
 
 # ===== Hot =====

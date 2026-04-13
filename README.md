@@ -19,6 +19,7 @@ A CLI for Bilibili — browse videos, users, favorites from the terminal 📺
 ## Features
 
 - 🎬 **Video** — details, subtitles, AI summary, comments, related videos
+- 💾 **Video Download** — download the best available video stream and remux DASH without transcoding
 - 🎵 **Audio** — extract audio and split into ASR-ready WAV segments
 - 👤 **User** — profile, video list, following list
 - 🔍 **Search** — search users or videos by keyword
@@ -46,6 +47,8 @@ uv tool install "bilibili-cli[audio]"
 # or
 pipx install "bilibili-cli[audio]"
 ```
+
+For video downloads, install `ffmpeg` separately and ensure `ffmpeg` is available in `PATH`.
 
 Upgrade to the latest version:
 
@@ -133,6 +136,12 @@ bili audio BV1ABcsztEcY --segment 60    # 60s per segment
 bili audio BV1ABcsztEcY --no-split      # Full m4a, no splitting
 bili audio BV1ABcsztEcY -o ~/data/      # Custom output directory
 
+# Video download
+bili download BV1ABcsztEcY              # Best available video, default mkv for DASH
+bili download BV1ABcsztEcY --container mp4
+bili download BV1ABcsztEcY --page 2 -o ~/Videos/
+bili download BV1ABcsztEcY --keep-raw -o ~/Videos/
+
 # Interactions
 bili like BV1ABcsztEcY                  # Like
 bili coin BV1ABcsztEcY                  # Give coin
@@ -156,6 +165,7 @@ Credentials are validated on use for authenticated commands. Expired cookies are
 Most commands work without login. Subtitles, favorites/following/watch-later/history, feed, my-dynamics, and interactions require authentication. Write actions (like/coin/triple/unfollow/dynamic-post/dynamic-delete) require write-capable credential (`bili_jct`).
 
 Audio extraction requires the optional `audio` dependency group (`av`).
+Video download requires a local `ffmpeg` binary for DASH remux.
 
 ## Structured Output
 
@@ -195,6 +205,7 @@ bili user-videos 946974 --max 3 --yaml
 For agent usage, also prefer narrower queries (`--max`, `--page`, `--offset`) to avoid wasting context on oversized payloads.
 
 When an AI agent is asked to summarize a video, it should fetch subtitles first. Subtitles usually contain the core content of the video and are the best primary source for summarization. Only fall back to AI summary, comments, or audio extraction when subtitles are unavailable or insufficient.
+When an AI agent needs the original media file, use `bili download`; use `bili audio` only when audio-only or ASR-ready segments are needed.
 
 ### [Skills CLI](https://github.com/vercel-labs/skills) (Recommended)
 
@@ -226,6 +237,8 @@ Once added, AI agents that support the `.agents/skills/` convention will automat
 - `需要登录` / `not_authenticated` — Run `bili login` to scan QR code, or ensure you're logged in to bilibili.com in Chrome/Firefox/Edge/Brave.
 - `HTTP 412` / `RateLimitError` — Bilibili anti-scraping triggered. Wait a moment and retry, or reduce `--max`.
 - `无法提取 BV 号` / `InvalidBvidError` — Check the BV ID or URL format. Must be `BV` followed by 10 alphanumeric characters.
+- `未找到 ffmpeg` — Install `ffmpeg` and ensure it is available in your shell `PATH`.
+- `无法获取完整视频流` — The video may require login, membership, or may not expose downloadable DASH audio/video pairs.
 - `NetworkError` — Check your network connection. If behind a proxy, ensure it supports the target domain.
 - `当前登录凭证不支持写操作` — Your saved cookies lack `bili_jct`. Run `bili login` to re-authorize with full write permission.
 
@@ -243,6 +256,7 @@ Structured error codes: `not_authenticated`, `permission_denied`, `invalid_input
 ## 功能特性
 
 - 🎬 **视频** — 详情、字幕、AI 总结、评论、相关推荐
+- 💾 **视频下载** — 下载当前可用的最佳视频流，DASH 场景下无转码封装输出
 - 🎵 **音频** — 提取视频音频，切分为语音识别 (ASR) 可用的 WAV 片段
 - 👤 **用户** — UP 主资料、视频列表、关注列表
 - 🔍 **搜索** — 按关键词搜索用户或视频
@@ -269,6 +283,8 @@ uv tool install "bilibili-cli[audio]"
 # 或
 pipx install "bilibili-cli[audio]"
 ```
+
+如果需要视频下载，请另外安装 `ffmpeg`，并确保命令行里能直接执行 `ffmpeg`。
 
 升级到最新版本：
 
@@ -355,6 +371,12 @@ bili audio BV1ABcsztEcY --segment 60    # 每段 60 秒
 bili audio BV1ABcsztEcY --no-split      # 完整 m4a，不切分
 bili audio BV1ABcsztEcY -o ~/data/      # 自定义输出目录
 
+# 视频下载
+bili download BV1ABcsztEcY              # 下载当前可用最佳视频，DASH 默认封装为 mkv
+bili download BV1ABcsztEcY --container mp4
+bili download BV1ABcsztEcY --page 2 -o ~/Videos/
+bili download BV1ABcsztEcY --keep-raw -o ~/Videos/
+
 # 互动
 bili like BV1ABcsztEcY                  # 点赞
 bili coin BV1ABcsztEcY                  # 投币
@@ -410,8 +432,10 @@ bili user-videos 946974 --max 3 --yaml
 另外，agent 应尽量配合 `--max`、`--page`、`--offset` 缩小结果集，避免把不必要的数据带进上下文。
 
 如果 agent 要帮用户总结视频，应该优先拉字幕。字幕通常就是视频核心内容的第一手来源，最适合做 summary；只有在没有字幕或字幕明显不足时，再退回到 AI summary、评论或音频提取。
+如果 agent 需要媒体文件本身，优先使用 `bili download`；只有在需要纯音频或 ASR 切片时才使用 `bili audio`。
 
 音频提取功能需要安装可选依赖组 `audio`（即 `av`）。
+视频下载需要本地安装 `ffmpeg`，用于无转码封装 DASH 音视频流。
 
 ## 作为 AI Agent Skill 使用
 
@@ -447,6 +471,8 @@ git clone git@github.com:jackwener/bilibili-cli.git .agents/skills/bilibili-cli
 - `需要登录` — 执行 `bili login` 扫码登录，或确保已在 Chrome/Firefox/Edge/Brave 登录 bilibili.com
 - `HTTP 412` / `RateLimitError` — B 站反爬触发，稍等后重试，或减小 `--max`
 - `无法提取 BV 号` — 检查 BV 号或 URL 格式，必须是 `BV` + 10 位字母数字
+- `未找到 ffmpeg` — 请先安装 `ffmpeg`，并确认终端里能直接运行 `ffmpeg`
+- `无法获取完整视频流` — 该视频可能需要登录、会员权限，或者当前没有可用的完整 DASH 音视频流
 - `NetworkError` — 检查网络连接
 - `当前登录凭证不支持写操作` — 保存的 Cookie 缺少 `bili_jct`，执行 `bili login` 重新授权
 

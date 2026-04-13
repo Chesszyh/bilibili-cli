@@ -63,6 +63,62 @@ async def test_get_audio_url_no_stream_raises():
             await client.get_audio_url("BV1test12345")
 
 
+@pytest.mark.asyncio
+async def test_get_video_download_streams_dash():
+    mock_download_data = {"dash": {"video": [{"baseUrl": "https://example.com/video.m4s"}]}}
+    mock_video_stream = MagicMock()
+    mock_video_stream.url = "https://example.com/video.m4s"
+    mock_audio_stream = MagicMock()
+    mock_audio_stream.url = "https://example.com/audio.m4s"
+
+    with patch("bili_cli.client.video.Video") as MockVideo, \
+         patch("bili_cli.client.video.VideoDownloadURLDataDetecter") as MockDetector:
+        MockVideo.return_value.get_download_url = AsyncMock(return_value=mock_download_data)
+        detector_instance = MockDetector.return_value
+        detector_instance.check_flv_mp4_stream.return_value = False
+        detector_instance.detect_best_streams.return_value = [mock_video_stream, mock_audio_stream]
+
+        result = await client.get_video_download_streams("BV1test12345", page=2)
+
+    assert result["kind"] == "dash"
+    assert result["video_url"] == "https://example.com/video.m4s"
+    assert result["audio_url"] == "https://example.com/audio.m4s"
+    MockVideo.return_value.get_download_url.assert_awaited_once_with(page_index=1)
+
+
+@pytest.mark.asyncio
+async def test_get_video_download_streams_progressive():
+    mock_download_data = {"durl": [{"url": "https://example.com/full.mp4"}]}
+    mock_stream = MagicMock()
+    mock_stream.url = "https://example.com/full.mp4"
+
+    with patch("bili_cli.client.video.Video") as MockVideo, \
+         patch("bili_cli.client.video.VideoDownloadURLDataDetecter") as MockDetector:
+        MockVideo.return_value.get_download_url = AsyncMock(return_value=mock_download_data)
+        detector_instance = MockDetector.return_value
+        detector_instance.check_flv_mp4_stream.return_value = True
+        detector_instance.detect_best_streams.return_value = [mock_stream]
+
+        result = await client.get_video_download_streams("BV1test12345")
+
+    assert result["kind"] == "progressive"
+    assert result["url"] == "https://example.com/full.mp4"
+    assert result["ext"] == ".mp4"
+
+
+@pytest.mark.asyncio
+async def test_get_video_download_streams_requires_both_dash_streams():
+    with patch("bili_cli.client.video.Video") as MockVideo, \
+         patch("bili_cli.client.video.VideoDownloadURLDataDetecter") as MockDetector:
+        MockVideo.return_value.get_download_url = AsyncMock(return_value={"dash": {}})
+        detector_instance = MockDetector.return_value
+        detector_instance.check_flv_mp4_stream.return_value = False
+        detector_instance.detect_best_streams.return_value = [MagicMock(url="https://example.com/video.m4s"), None]
+
+        with pytest.raises(BiliError, match="无法获取完整视频流"):
+            await client.get_video_download_streams("BV1test12345")
+
+
 def test_split_audio_import_error():
     """split_audio should raise BiliError when PyAV is not installed."""
     import builtins
@@ -124,6 +180,73 @@ async def test_download_audio_streams_chunks_to_file():
             assert n == 8
             with open(path, "rb") as f:
                 assert f.read() == b"abcdefgh"
+
+
+@pytest.mark.asyncio
+async def test_download_stream_writes_bytes():
+    content = [b"abc", b"defgh", b""]
+
+    class FakeContent:
+        async def iter_chunked(self, _size):
+            for c in content:
+                yield c
+
+    class FakeResponse:
+        status = 200
+        content = FakeContent()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeSession:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, _url, headers=None):
+            return FakeResponse()
+
+    with patch("bili_cli.client.aiohttp.ClientSession", FakeSession):
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "stream.bin")
+            n = await client.download_stream("https://example.com/video.m4s", path)
+            assert n == 8
+            with open(path, "rb") as f:
+                assert f.read() == b"abcdefgh"
+
+
+def test_merge_streams_ffmpeg_invokes_copy_mode():
+    with patch("bili_cli.client.subprocess.run") as mock_run:
+        client.merge_streams_ffmpeg("video.m4s", "audio.m4s", "out.mkv")
+
+    mock_run.assert_called_once()
+    cmd = mock_run.call_args.args[0]
+    assert cmd[:4] == ["ffmpeg", "-y", "-i", "video.m4s"]
+    assert cmd[4:7] == ["-i", "audio.m4s", "-c"]
+    assert cmd[7:] == ["copy", "out.mkv"]
+
+
+def test_merge_streams_ffmpeg_missing_binary_raises():
+    with patch("bili_cli.client.subprocess.run", side_effect=FileNotFoundError):
+        with pytest.raises(BiliError, match="ffmpeg"):
+            client.merge_streams_ffmpeg("video.m4s", "audio.m4s", "out.mkv")
+
+
+def test_merge_streams_ffmpeg_subprocess_failure_raises():
+    import subprocess
+
+    err = subprocess.CalledProcessError(1, ["ffmpeg"], stderr="mux failed")
+    with patch("bili_cli.client.subprocess.run", side_effect=err):
+        with pytest.raises(BiliError, match="mux failed"):
+            client.merge_streams_ffmpeg("video.m4s", "audio.m4s", "out.mkv")
 
 
 # ===== CLI command tests =====

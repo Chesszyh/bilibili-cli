@@ -10,7 +10,9 @@ import asyncio
 import logging
 import os
 import re
+import subprocess
 from typing import Any
+from urllib.parse import urlparse
 
 import aiohttp
 from bilibili_api import comment, dynamic, favorite_list, homepage, hot, rank, search, user, video
@@ -633,6 +635,53 @@ _DOWNLOAD_HEADERS = {
 }
 
 
+def _infer_stream_extension(url: str, fallback: str) -> str:
+    """Infer a file extension from a stream URL."""
+    path = urlparse(url).path
+    ext = os.path.splitext(path)[1].lower()
+    return ext or fallback
+
+
+async def get_video_download_streams(
+    bvid: str,
+    page: int = 1,
+    credential: Credential | None = None,
+) -> dict[str, str]:
+    """Resolve the best available video download streams for a page."""
+    from bilibili_api.video import VideoDownloadURLDataDetecter
+
+    if page <= 0:
+        raise BiliError("page 必须大于 0")
+
+    v = video.Video(bvid=bvid, credential=credential)
+    download_data = await _call_api("获取下载地址", v.get_download_url(page_index=page - 1))
+    detector = VideoDownloadURLDataDetecter(download_data)
+    streams = detector.detect_best_streams()
+
+    if detector.check_flv_mp4_stream():
+        if streams and streams[0] is not None and hasattr(streams[0], "url"):
+            url = streams[0].url
+            return {
+                "kind": "progressive",
+                "url": url,
+                "ext": _infer_stream_extension(url, ".mp4"),
+            }
+        raise BiliError("无法获取视频流（可能是会员专属视频）")
+
+    if len(streams) < 2 or streams[0] is None or streams[1] is None:
+        raise BiliError("无法获取完整视频流（可能是会员专属视频）")
+
+    video_url = streams[0].url
+    audio_url = streams[1].url
+    return {
+        "kind": "dash",
+        "video_url": video_url,
+        "audio_url": audio_url,
+        "video_ext": _infer_stream_extension(video_url, ".m4s"),
+        "audio_ext": _infer_stream_extension(audio_url, ".m4s"),
+    }
+
+
 async def get_audio_url(bvid: str, credential: Credential | None = None) -> str:
     """Get the best audio stream URL for a video (DASH preferred)."""
     from bilibili_api.video import AudioQuality, VideoDownloadURLDataDetecter
@@ -661,15 +710,15 @@ async def get_audio_url(bvid: str, credential: Credential | None = None) -> str:
     raise BiliError("无法获取音频流（可能是会员专属视频）")
 
 
-async def download_audio(audio_url: str, output_path: str) -> int:
-    """Download audio stream to a file. Returns bytes written."""
+async def download_stream(media_url: str, output_path: str) -> int:
+    """Download a media stream to a file. Returns bytes written."""
     timeout = aiohttp.ClientTimeout(total=300)
     max_retries = 3
 
     for attempt in range(max_retries):
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(audio_url, headers=_DOWNLOAD_HEADERS) as resp:
+                async with session.get(media_url, headers=_DOWNLOAD_HEADERS) as resp:
                     if resp.status == 200:
                         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
                         total_bytes = 0
@@ -684,15 +733,43 @@ async def download_audio(audio_url: str, output_path: str) -> int:
                         logger.warning("Download HTTP %d, retrying...", resp.status)
                         await asyncio.sleep(2)
                     else:
-                        raise NetworkError(f"音频下载失败: HTTP {resp.status}")
+                        raise NetworkError(f"下载流失败: HTTP {resp.status}")
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             if attempt < max_retries - 1:
                 logger.warning("Download error: %s, retrying...", e)
                 await asyncio.sleep(2)
             else:
-                raise NetworkError(f"音频下载失败: {e}") from e
+                raise NetworkError(f"下载流失败: {e}") from e
 
-    raise NetworkError("音频下载失败: 重试次数用尽")
+    raise NetworkError("下载流失败: 重试次数用尽")
+
+
+async def download_audio(audio_url: str, output_path: str) -> int:
+    """Download audio stream to a file. Returns bytes written."""
+    return await download_stream(audio_url, output_path)
+
+
+def merge_streams_ffmpeg(video_path: str, audio_path: str, output_path: str) -> None:
+    """Remux separate video/audio streams without transcoding."""
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        video_path,
+        "-i",
+        audio_path,
+        "-c",
+        "copy",
+        output_path,
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+    except FileNotFoundError as e:
+        raise BiliError("未找到 ffmpeg，请先安装 ffmpeg") from e
+    except subprocess.CalledProcessError as e:
+        detail = (e.stderr or e.stdout or str(e)).strip()
+        raise BiliError(f"ffmpeg 合并失败: {detail}") from e
 
 
 def split_audio(input_path: str, output_dir: str, segment_seconds: int = 25) -> list[str]:

@@ -9,6 +9,7 @@ Usage:
     bili dynamic-post <TEXT> / dynamic-delete <动态ID>
     bili like / coin / triple <BV号> / unfollow <UID>
     bili audio <BV号> [--segment N] [--no-split] [-o DIR]
+    bili download <BV号或URL> [--page N] [--container mkv|mp4] [--keep-raw] [-o PATH]
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from __future__ import annotations
 import click
 
 from . import __version__
-from .commands import account, audio, collections, common, discovery, interactions, user_search, video
+from .commands import account, audio, collections, common, discovery, download, interactions, user_search, video
 
 
 # Keep helper names for backward compatibility with tests/importers.
@@ -66,6 +67,7 @@ cli.add_command(interactions.triple)
 cli.add_command(interactions.unfollow)
 
 cli.add_command(audio.audio)
+cli.add_command(download.download)
 
 
 if __name__ == "__main__":
