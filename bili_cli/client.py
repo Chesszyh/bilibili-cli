@@ -642,44 +642,72 @@ def _infer_stream_extension(url: str, fallback: str) -> str:
     return ext or fallback
 
 
+def _stream_url(item: dict[str, Any]) -> str:
+    """Return the primary URL from a raw Bilibili stream item."""
+    url = item.get("baseUrl") or item.get("base_url") or item.get("url")
+    return url if isinstance(url, str) else ""
+
+
+def _stream_rank(item: dict[str, Any]) -> tuple[int, int]:
+    """Rank raw stream candidates by quality id and bitrate."""
+    try:
+        quality = int(item.get("id") or 0)
+    except (TypeError, ValueError):
+        quality = 0
+    try:
+        bandwidth = int(item.get("bandwidth") or 0)
+    except (TypeError, ValueError):
+        bandwidth = 0
+    return quality, bandwidth
+
+
+def _best_raw_stream(items: object) -> dict[str, Any] | None:
+    """Pick the best raw stream item with a usable URL."""
+    if not isinstance(items, list):
+        return None
+    candidates = [item for item in items if isinstance(item, dict) and _stream_url(item)]
+    if not candidates:
+        return None
+    return max(candidates, key=_stream_rank)
+
+
 async def get_video_download_streams(
     bvid: str,
     page: int = 1,
     credential: Credential | None = None,
 ) -> dict[str, str]:
     """Resolve the best available video download streams for a page."""
-    from bilibili_api.video import VideoDownloadURLDataDetecter
-
     if page <= 0:
         raise BiliError("page 必须大于 0")
 
     v = video.Video(bvid=bvid, credential=credential)
     download_data = await _call_api("获取下载地址", v.get_download_url(page_index=page - 1))
-    detector = VideoDownloadURLDataDetecter(download_data)
-    streams = detector.detect_best_streams()
 
-    if detector.check_flv_mp4_stream():
-        if streams and streams[0] is not None and hasattr(streams[0], "url"):
-            url = streams[0].url
+    dash = download_data.get("dash") if isinstance(download_data, dict) else None
+    if isinstance(dash, dict):
+        video_stream = _best_raw_stream(dash.get("video"))
+        audio_stream = _best_raw_stream(dash.get("audio"))
+        if video_stream is not None and audio_stream is not None:
+            video_url = _stream_url(video_stream)
+            audio_url = _stream_url(audio_stream)
             return {
-                "kind": "progressive",
-                "url": url,
-                "ext": _infer_stream_extension(url, ".mp4"),
+                "kind": "dash",
+                "video_url": video_url,
+                "audio_url": audio_url,
+                "video_ext": _infer_stream_extension(video_url, ".m4s"),
+                "audio_ext": _infer_stream_extension(audio_url, ".m4s"),
             }
-        raise BiliError("无法获取视频流（可能是会员专属视频）")
 
-    if len(streams) < 2 or streams[0] is None or streams[1] is None:
-        raise BiliError("无法获取完整视频流（可能是会员专属视频）")
+    durl_stream = _best_raw_stream(download_data.get("durl") if isinstance(download_data, dict) else None)
+    if durl_stream is not None:
+        url = _stream_url(durl_stream)
+        return {
+            "kind": "progressive",
+            "url": url,
+            "ext": _infer_stream_extension(url, ".mp4"),
+        }
 
-    video_url = streams[0].url
-    audio_url = streams[1].url
-    return {
-        "kind": "dash",
-        "video_url": video_url,
-        "audio_url": audio_url,
-        "video_ext": _infer_stream_extension(video_url, ".m4s"),
-        "audio_ext": _infer_stream_extension(audio_url, ".m4s"),
-    }
+    raise BiliError("无法获取完整视频流（可能是会员专属视频）")
 
 
 async def get_audio_url(bvid: str, credential: Credential | None = None) -> str:

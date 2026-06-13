@@ -65,18 +65,22 @@ async def test_get_audio_url_no_stream_raises():
 
 @pytest.mark.asyncio
 async def test_get_video_download_streams_dash():
-    mock_download_data = {"dash": {"video": [{"baseUrl": "https://example.com/video.m4s"}]}}
-    mock_video_stream = MagicMock()
-    mock_video_stream.url = "https://example.com/video.m4s"
-    mock_audio_stream = MagicMock()
-    mock_audio_stream.url = "https://example.com/audio.m4s"
+    mock_download_data = {
+        "dash": {
+            "video": [
+                {"id": 16, "bandwidth": 100, "baseUrl": "https://example.com/360p.m4s"},
+                {"id": 32, "bandwidth": 200, "baseUrl": "https://example.com/video.m4s"},
+            ],
+            "audio": [
+                {"id": 30216, "bandwidth": 64, "baseUrl": "https://example.com/audio-64.m4s"},
+                {"id": 30280, "bandwidth": 128, "baseUrl": "https://example.com/audio.m4s"},
+            ],
+        }
+    }
 
     with patch("bili_cli.client.video.Video") as MockVideo, \
          patch("bili_cli.client.video.VideoDownloadURLDataDetecter") as MockDetector:
         MockVideo.return_value.get_download_url = AsyncMock(return_value=mock_download_data)
-        detector_instance = MockDetector.return_value
-        detector_instance.check_flv_mp4_stream.return_value = False
-        detector_instance.detect_best_streams.return_value = [mock_video_stream, mock_audio_stream]
 
         result = await client.get_video_download_streams("BV1test12345", page=2)
 
@@ -84,6 +88,34 @@ async def test_get_video_download_streams_dash():
     assert result["video_url"] == "https://example.com/video.m4s"
     assert result["audio_url"] == "https://example.com/audio.m4s"
     MockVideo.return_value.get_download_url.assert_awaited_once_with(page_index=1)
+    MockDetector.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_video_download_streams_dash_uses_raw_payload_when_detector_fails():
+    mock_download_data = {
+        "dash": {
+            "video": [
+                {"id": 16, "bandwidth": 100, "baseUrl": "https://example.com/360p.m4s"},
+                {"id": 32, "bandwidth": 200, "baseUrl": "https://example.com/480p.m4s"},
+            ],
+            "audio": [
+                {"id": 30216, "bandwidth": 64, "baseUrl": "https://example.com/audio-64.m4s"},
+                {"id": 30280, "bandwidth": 128, "baseUrl": "https://example.com/audio-128.m4s"},
+            ],
+        }
+    }
+
+    with patch("bili_cli.client.video.Video") as MockVideo, \
+         patch("bili_cli.client.video.VideoDownloadURLDataDetecter") as MockDetector:
+        MockVideo.return_value.get_download_url = AsyncMock(return_value=mock_download_data)
+        MockDetector.return_value.detect_best_streams.side_effect = AttributeError("'NoneType' object has no attribute 'value'")
+
+        result = await client.get_video_download_streams("BV1test12345")
+
+    assert result["kind"] == "dash"
+    assert result["video_url"] == "https://example.com/480p.m4s"
+    assert result["audio_url"] == "https://example.com/audio-128.m4s"
 
 
 @pytest.mark.asyncio
