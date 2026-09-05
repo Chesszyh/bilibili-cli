@@ -3,7 +3,7 @@
 import pytest
 
 from bili_cli.cli import _format_count, _format_duration
-from bili_cli.client import extract_bvid
+from bili_cli.client import extract_bvid, extract_download_target
 from bili_cli.exceptions import InvalidBvidError
 
 
@@ -84,3 +84,25 @@ class TestExtractBvid:
     def test_short_bvid_raises(self):
         with pytest.raises(InvalidBvidError):
             extract_bvid("BV123")
+
+
+class TestExtractDownloadTarget:
+    def test_bangumi_episode_id(self):
+        assert extract_download_target("ep693249") == ("episode", 693249)
+
+    def test_bangumi_episode_url(self):
+        url = (
+            "https://www.bilibili.com/bangumi/play/ep693249"
+            "?spm_id_from=333.337.0.0&from_spmid=666.25.episode.0"
+        )
+        assert extract_download_target(url) == ("episode", 693249)
+
+    def test_regular_video(self):
+        assert extract_download_target("https://www.bilibili.com/video/BV1ABcsztEcY") == (
+            "video",
+            "BV1ABcsztEcY",
+        )
+
+    def test_season_id_is_not_a_single_episode(self):
+        with pytest.raises(InvalidBvidError, match="无法识别下载目标"):
+            extract_download_target("ss26274")

@@ -15,7 +15,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp
-from bilibili_api import comment, dynamic, favorite_list, homepage, hot, rank, search, user, video
+from bilibili_api import bangumi, comment, dynamic, favorite_list, homepage, hot, rank, search, user, video
 from bilibili_api.exceptions import (
     ApiException,
     CredentialNoBiliJctException,
@@ -42,6 +42,11 @@ _USER_AGENT = (
 # ---------------------------------------------------------------------------
 
 _BVID_RE = re.compile(r"\bBV[0-9A-Za-z]{10}\b")
+_EPISODE_ID_RE = re.compile(r"^ep(\d+)$", re.IGNORECASE)
+_EPISODE_URL_RE = re.compile(
+    r"^https?://(?:(?:www|m)\.)?bilibili\.com/bangumi/play/ep(\d+)(?:[/?#]|$)",
+    re.IGNORECASE,
+)
 
 
 def extract_bvid(url_or_bvid: str) -> str:
@@ -50,6 +55,22 @@ def extract_bvid(url_or_bvid: str) -> str:
     if match:
         return match.group(0)
     raise InvalidBvidError(f"无法提取 BV 号: {url_or_bvid}")
+
+
+def extract_download_target(value: str) -> tuple[str, str | int]:
+    """Parse a regular video or one bangumi episode download target."""
+    bvid_match = _BVID_RE.search(value)
+    if bvid_match:
+        return "video", bvid_match.group(0)
+
+    normalized = value.strip()
+    episode_match = _EPISODE_ID_RE.fullmatch(normalized) or _EPISODE_URL_RE.match(normalized)
+    if episode_match:
+        return "episode", int(episode_match.group(1))
+
+    raise InvalidBvidError(
+        "无法识别下载目标；请提供 BV 号、普通视频 URL、ep 号或番剧单集 URL"
+    )
 
 
 def _map_api_error(action: str, exc: Exception) -> BiliError:
@@ -671,17 +692,9 @@ def _best_raw_stream(items: object) -> dict[str, Any] | None:
     return max(candidates, key=_stream_rank)
 
 
-async def get_video_download_streams(
-    bvid: str,
-    page: int = 1,
-    credential: Credential | None = None,
-) -> dict[str, str]:
-    """Resolve the best available video download streams for a page."""
-    if page <= 0:
-        raise BiliError("page 必须大于 0")
-
-    v = video.Video(bvid=bvid, credential=credential)
-    download_data = await _call_api("获取下载地址", v.get_download_url(page_index=page - 1))
+def _normalize_download_streams(download_data: object) -> dict[str, str]:
+    if isinstance(download_data, dict) and isinstance(download_data.get("video_info"), dict):
+        download_data = download_data["video_info"]
 
     dash = download_data.get("dash") if isinstance(download_data, dict) else None
     if isinstance(dash, dict):
@@ -707,7 +720,69 @@ async def get_video_download_streams(
             "ext": _infer_stream_extension(url, ".mp4"),
         }
 
-    raise BiliError("无法获取完整视频流（可能是会员专属视频）")
+    raise BiliError("无法获取完整视频流（会员、区域或 DRM 限制可能不允许下载）")
+
+
+def _episode_display_info(epid: int, download_data: dict[str, Any]) -> dict[str, Any]:
+    business_info = download_data.get("play_view_business_info", {})
+    episode_info = business_info.get("episode_info", {}) if isinstance(business_info, dict) else {}
+    season_info = business_info.get("season_info", {}) if isinstance(business_info, dict) else {}
+
+    title_parts = []
+    if isinstance(season_info, dict) and season_info.get("title"):
+        title_parts.append(str(season_info["title"]))
+
+    if isinstance(episode_info, dict):
+        episode_title = episode_info.get("title")
+        long_title = episode_info.get("long_title") or episode_info.get("longtitle")
+        if episode_title:
+            title_parts.append(f"第{episode_title}集" if str(episode_title).isdigit() else str(episode_title))
+        if long_title:
+            title_parts.append(str(long_title))
+
+    video_info = download_data.get("video_info", {})
+    duration_ms = video_info.get("timelength", 0) if isinstance(video_info, dict) else 0
+    if not duration_ms:
+        duration_ms = download_data.get("timelength", 0)
+    try:
+        duration = max(0, int(duration_ms) // 1000)
+    except (TypeError, ValueError):
+        duration = 0
+
+    return {
+        "title": " ".join(title_parts) or f"ep{epid}",
+        "duration": duration,
+        "epid": epid,
+    }
+
+
+async def get_video_download_streams(
+    bvid: str,
+    page: int = 1,
+    credential: Credential | None = None,
+) -> dict[str, str]:
+    """Resolve the best available video download streams for a page."""
+    if page <= 0:
+        raise BiliError("page 必须大于 0")
+
+    v = video.Video(bvid=bvid, credential=credential)
+    download_data = await _call_api("获取下载地址", v.get_download_url(page_index=page - 1))
+    return _normalize_download_streams(download_data)
+
+
+async def get_episode_download(
+    epid: int,
+    credential: Credential | None,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """Resolve metadata and streams for one authenticated bangumi episode."""
+    if credential is None:
+        raise AuthenticationError("番剧下载需要登录；请先执行 bili login")
+
+    episode = bangumi.Episode(epid=epid, credential=credential)
+    download_data = await _call_api("获取番剧下载地址", episode.get_download_url())
+    if not isinstance(download_data, dict):
+        raise BiliError("番剧播放地址返回了无法识别的数据")
+    return _episode_display_info(epid, download_data), _normalize_download_streams(download_data)
 
 
 async def get_audio_url(bvid: str, credential: Credential | None = None) -> str:

@@ -271,7 +271,7 @@ def test_download_progressive_saves_native_extension(runner):
     info = {"title": "Test Video", "duration": 120}
     with tempfile.TemporaryDirectory() as tmpdir:
         with patch("bili_cli.commands.common.get_credential", return_value=None), \
-             patch("bili_cli.client.extract_bvid", return_value="BV1test123"), \
+             patch("bili_cli.client.extract_download_target", return_value=("video", "BV1test123")), \
              patch("bili_cli.client.get_video_info", new_callable=AsyncMock, return_value=info), \
              patch(
                  "bili_cli.client.get_video_download_streams",
@@ -302,7 +302,7 @@ def test_download_dash_merges_streams(runner):
     info = {"title": "Test Video", "duration": 120}
     with tempfile.TemporaryDirectory() as tmpdir:
         with patch("bili_cli.commands.common.get_credential", return_value=None), \
-             patch("bili_cli.client.extract_bvid", return_value="BV1test123"), \
+             patch("bili_cli.client.extract_download_target", return_value=("video", "BV1test123")), \
              patch("bili_cli.client.get_video_info", new_callable=AsyncMock, return_value=info), \
              patch(
                  "bili_cli.client.get_video_download_streams",
@@ -342,7 +342,7 @@ def test_download_keep_raw_preserves_intermediate_files(runner):
     info = {"title": "Test Video", "duration": 120}
     with tempfile.TemporaryDirectory() as tmpdir:
         with patch("bili_cli.commands.common.get_credential", return_value=None), \
-             patch("bili_cli.client.extract_bvid", return_value="BV1test123"), \
+             patch("bili_cli.client.extract_download_target", return_value=("video", "BV1test123")), \
              patch("bili_cli.client.get_video_info", new_callable=AsyncMock, return_value=info), \
              patch(
                  "bili_cli.client.get_video_download_streams",
@@ -374,7 +374,7 @@ def test_download_merge_failure_returns_nonzero(runner):
     info = {"title": "Test Video", "duration": 120}
     with tempfile.TemporaryDirectory() as tmpdir:
         with patch("bili_cli.commands.common.get_credential", return_value=None), \
-             patch("bili_cli.client.extract_bvid", return_value="BV1test123"), \
+             patch("bili_cli.client.extract_download_target", return_value=("video", "BV1test123")), \
              patch("bili_cli.client.get_video_info", new_callable=AsyncMock, return_value=info), \
              patch(
                  "bili_cli.client.get_video_download_streams",
@@ -393,6 +393,64 @@ def test_download_merge_failure_returns_nonzero(runner):
 
     assert result.exit_code != 0
     assert "合并视频" in result.output
+
+
+def test_download_bangumi_episode_uses_saved_credential(runner):
+    async def fake_download(_url, output_path):
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "wb") as f:
+            f.write(b"raw")
+        return 3
+
+    def fake_merge(_video_path, _audio_path, output_path):
+        with open(output_path, "wb") as f:
+            f.write(b"merged")
+
+    credential = MagicMock()
+    info = {"title": "孤独摇滚！ 第3集 馳せサンズ", "duration": 1420, "epid": 693249}
+    streams = {
+        "kind": "dash",
+        "video_url": "https://example.com/video.m4s",
+        "audio_url": "https://example.com/audio.m4s",
+        "video_ext": ".m4s",
+        "audio_ext": ".m4s",
+    }
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("bili_cli.commands.common.get_credential", return_value=credential), \
+             patch("bili_cli.client.get_episode_download", new_callable=AsyncMock, return_value=(info, streams)) as mock_episode, \
+             patch("bili_cli.client.get_video_info", new_callable=AsyncMock) as mock_video_info, \
+             patch("bili_cli.client.download_stream", new_callable=AsyncMock, side_effect=fake_download), \
+             patch("bili_cli.client.merge_streams_ffmpeg", side_effect=fake_merge):
+            result = runner.invoke(
+                cli,
+                ["download", "https://www.bilibili.com/bangumi/play/ep693249", "-o", tmpdir],
+            )
+
+        assert result.exit_code == 0
+        mock_episode.assert_awaited_once_with(693249, credential=credential)
+        mock_video_info.assert_not_awaited()
+        assert os.path.exists(os.path.join(tmpdir, "孤独摇滚！ 第3集 馳せサンズ.mkv"))
+
+
+def test_download_bangumi_episode_requires_saved_credential(runner):
+    with patch("bili_cli.commands.common.get_credential", return_value=None), \
+         patch("bili_cli.client.get_episode_download", new_callable=AsyncMock) as mock_episode:
+        result = runner.invoke(cli, ["download", "ep693249"])
+
+    assert result.exit_code != 0
+    assert "番剧下载需要登录" in " ".join(result.output.split())
+    mock_episode.assert_not_awaited()
+
+
+def test_download_bangumi_episode_rejects_page_option(runner):
+    with patch("bili_cli.commands.common.get_credential", return_value=MagicMock()), \
+         patch("bili_cli.client.get_episode_download", new_callable=AsyncMock) as mock_episode:
+        result = runner.invoke(cli, ["download", "ep693249", "--page", "2"])
+
+    assert result.exit_code != 0
+    assert "番剧单集不支持 --page" in " ".join(result.output.split())
+    mock_episode.assert_not_awaited()
 
 
 # ===== Hot =====

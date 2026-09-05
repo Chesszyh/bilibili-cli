@@ -9,7 +9,7 @@ Usage:
     bili dynamic-post <TEXT> / dynamic-delete <动态ID>
     bili like / coin / triple <BV号> / unfollow <UID>
     bili audio <BV号> [--segment N] [--no-split] [-o DIR]
-    bili download <BV号或URL> [--page N] [--container mkv|mp4] [--keep-raw] [-o PATH]
+    bili download <BV号|普通视频URL|ep号|番剧单集URL> [--page N] [--container mkv|mp4] [--keep-raw] [-o PATH]
 """
 
 from __future__ import annotations

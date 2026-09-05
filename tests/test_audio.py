@@ -9,7 +9,7 @@ from click.testing import CliRunner
 
 from bili_cli import client
 from bili_cli.cli import cli
-from bili_cli.exceptions import BiliError, NetworkError
+from bili_cli.exceptions import AuthenticationError, BiliError, NetworkError
 
 
 @pytest.fixture
@@ -149,6 +149,47 @@ async def test_get_video_download_streams_requires_both_dash_streams():
 
         with pytest.raises(BiliError, match="无法获取完整视频流"):
             await client.get_video_download_streams("BV1test12345")
+
+
+@pytest.mark.asyncio
+async def test_get_episode_download_uses_one_authenticated_playurl_request():
+    credential = MagicMock()
+    download_data = {
+        "play_view_business_info": {
+            "season_info": {"title": "孤独摇滚！"},
+            "episode_info": {"title": "3", "long_title": "馳せサンズ"},
+        },
+        "video_info": {
+            "timelength": 1420000,
+            "dash": {
+                "video": [{"id": 80, "bandwidth": 1000, "baseUrl": "https://example.com/video.m4s"}],
+                "audio": [{"id": 30280, "bandwidth": 192, "baseUrl": "https://example.com/audio.m4s"}],
+            },
+        },
+    }
+
+    with patch("bili_cli.client.bangumi.Episode") as MockEpisode:
+        MockEpisode.return_value.get_download_url = AsyncMock(return_value=download_data)
+        info, streams = await client.get_episode_download(693249, credential=credential)
+
+    MockEpisode.assert_called_once_with(epid=693249, credential=credential)
+    MockEpisode.return_value.get_download_url.assert_awaited_once_with()
+    assert info == {
+        "title": "孤独摇滚！ 第3集 馳せサンズ",
+        "duration": 1420,
+        "epid": 693249,
+    }
+    assert streams["kind"] == "dash"
+    assert streams["video_url"] == "https://example.com/video.m4s"
+    assert streams["audio_url"] == "https://example.com/audio.m4s"
+
+
+@pytest.mark.asyncio
+async def test_get_episode_download_requires_credential_before_request():
+    with patch("bili_cli.client.bangumi.Episode") as MockEpisode:
+        with pytest.raises(AuthenticationError, match="番剧下载需要登录"):
+            await client.get_episode_download(693249, credential=None)
+    MockEpisode.assert_not_called()
 
 
 def test_split_audio_import_error():

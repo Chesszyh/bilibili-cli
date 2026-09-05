@@ -19,7 +19,7 @@ A CLI for Bilibili — browse videos, users, favorites from the terminal 📺
 ## Features
 
 - 🎬 **Video** — details, subtitles, AI summary, comments, related videos
-- 💾 **Video Download** — download the best available video stream and remux DASH without transcoding
+- 💾 **Video Download** — download regular videos or authenticated bangumi episodes and remux DASH without transcoding
 - 🎵 **Audio** — extract audio and split into ASR-ready WAV segments
 - 👤 **User** — profile, video list, following list
 - 🔍 **Search** — search users or videos by keyword
@@ -138,6 +138,8 @@ bili audio BV1ABcsztEcY -o ~/data/      # Custom output directory
 
 # Video download
 bili download BV1ABcsztEcY              # Best available video, default mkv for DASH
+bili download ep693249                  # Bangumi episode; requires saved login credentials
+bili download https://www.bilibili.com/bangumi/play/ep693249 -o ~/Videos/
 bili download BV1ABcsztEcY --container mp4
 bili download BV1ABcsztEcY --page 2 -o ~/Videos/
 bili download BV1ABcsztEcY --keep-raw -o ~/Videos/
@@ -165,7 +167,7 @@ Credentials are validated on use for authenticated commands. Expired cookies are
 Most commands work without login. Subtitles, favorites/following/watch-later/history, feed, my-dynamics, and interactions require authentication. Write actions (like/coin/triple/unfollow/dynamic-post/dynamic-delete) require write-capable credential (`bili_jct`).
 
 Audio extraction requires the optional `audio` dependency group (`av`).
-Video download requires a local `ffmpeg` binary for DASH remux.
+Video download requires a local `ffmpeg` binary for DASH remux. Bangumi episode downloads also require credentials saved by `bili login`; membership, region, and DRM restrictions are not bypassed.
 
 ## Structured Output
 
@@ -236,9 +238,9 @@ Once added, AI agents that support the `.agents/skills/` convention will automat
 
 - `需要登录` / `not_authenticated` — Run `bili login` to scan QR code, or ensure you're logged in to bilibili.com in Chrome/Firefox/Edge/Brave.
 - `HTTP 412` / `RateLimitError` — Bilibili anti-scraping triggered. Wait a moment and retry, or reduce `--max`.
-- `无法提取 BV 号` / `InvalidBvidError` — Check the BV ID or URL format. Must be `BV` followed by 10 alphanumeric characters.
+- `无法识别下载目标` / `InvalidBvidError` — Downloads accept a BV ID, regular video URL, `ep` ID, or bangumi episode URL.
 - `未找到 ffmpeg` — Install `ffmpeg` and ensure it is available in your shell `PATH`.
-- `无法获取完整视频流` — The video may require login, membership, or may not expose downloadable DASH audio/video pairs.
+- `无法获取完整视频流` — The video may be unavailable because of membership, region, DRM, or missing DASH audio/video streams.
 - `NetworkError` — Check your network connection. If behind a proxy, ensure it supports the target domain.
 - `当前登录凭证不支持写操作` — Your saved cookies lack `bili_jct`. Run `bili login` to re-authorize with full write permission.
 
@@ -256,7 +258,7 @@ Structured error codes: `not_authenticated`, `permission_denied`, `invalid_input
 ## 功能特性
 
 - 🎬 **视频** — 详情、字幕、AI 总结、评论、相关推荐
-- 💾 **视频下载** — 下载当前可用的最佳视频流，DASH 场景下无转码封装输出
+- 💾 **视频下载** — 下载普通视频或已登录账号可播放的番剧单集，DASH 场景下无转码封装输出
 - 🎵 **音频** — 提取视频音频，切分为语音识别 (ASR) 可用的 WAV 片段
 - 👤 **用户** — UP 主资料、视频列表、关注列表
 - 🔍 **搜索** — 按关键词搜索用户或视频
@@ -373,6 +375,8 @@ bili audio BV1ABcsztEcY -o ~/data/      # 自定义输出目录
 
 # 视频下载
 bili download BV1ABcsztEcY              # 下载当前可用最佳视频，DASH 默认封装为 mkv
+bili download ep693249                  # 下载番剧单集，需要已保存的登录凭证
+bili download https://www.bilibili.com/bangumi/play/ep693249 -o ~/Videos/
 bili download BV1ABcsztEcY --container mp4
 bili download BV1ABcsztEcY --page 2 -o ~/Videos/
 bili download BV1ABcsztEcY --keep-raw -o ~/Videos/
@@ -396,7 +400,7 @@ bilibili-cli 采用三级认证策略：
 
 需要认证的命令会自动校验凭证。过期 Cookie 会自动清除；如果只是临时网络异常，不会误清本地凭证（会以 best-effort 继续尝试）。
 
-大部分命令无需登录。字幕、收藏夹、动态和互动操作需要登录。写操作（like/coin/triple/unfollow/dynamic-post/dynamic-delete）需要可写凭证（包含 `bili_jct`）。
+大部分命令无需登录。字幕、番剧单集下载、收藏夹、动态和互动操作需要登录。写操作（like/coin/triple/unfollow/dynamic-post/dynamic-delete）需要可写凭证（包含 `bili_jct`）。
 
 ## 结构化输出
 
@@ -435,7 +439,7 @@ bili user-videos 946974 --max 3 --yaml
 如果 agent 需要媒体文件本身，优先使用 `bili download`；只有在需要纯音频或 ASR 切片时才使用 `bili audio`。
 
 音频提取功能需要安装可选依赖组 `audio`（即 `av`）。
-视频下载需要本地安装 `ffmpeg`，用于无转码封装 DASH 音视频流。
+视频下载需要本地安装 `ffmpeg`，用于无转码封装 DASH 音视频流。番剧单集还需要先通过 `bili login` 保存登录凭证；工具不会绕过会员、区域或 DRM 限制。
 
 ## 作为 AI Agent Skill 使用
 
@@ -470,9 +474,9 @@ git clone git@github.com:jackwener/bilibili-cli.git .agents/skills/bilibili-cli
 
 - `需要登录` — 执行 `bili login` 扫码登录，或确保已在 Chrome/Firefox/Edge/Brave 登录 bilibili.com
 - `HTTP 412` / `RateLimitError` — B 站反爬触发，稍等后重试，或减小 `--max`
-- `无法提取 BV 号` — 检查 BV 号或 URL 格式，必须是 `BV` + 10 位字母数字
+- `无法识别下载目标` — 下载命令接受 BV 号、普通视频 URL、`ep` 号或番剧单集 URL
 - `未找到 ffmpeg` — 请先安装 `ffmpeg`，并确认终端里能直接运行 `ffmpeg`
-- `无法获取完整视频流` — 该视频可能需要登录、会员权限，或者当前没有可用的完整 DASH 音视频流
+- `无法获取完整视频流` — 该视频可能受会员、区域或 DRM 限制，或者当前没有完整 DASH 音视频流
 - `NetworkError` — 检查网络连接
 - `当前登录凭证不支持写操作` — 保存的 Cookie 缺少 `bili_jct`，执行 `bili login` 重新授权
 

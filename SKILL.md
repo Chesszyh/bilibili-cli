@@ -49,7 +49,7 @@ uv tool upgrade bilibili-cli
 
 ## Authentication
 
-Most read commands work without login. Subtitles, favorites/following/watch-later/history, feed, and interactions require login.
+Most read commands work without login. Subtitles, bangumi episode downloads, favorites/following/watch-later/history, feed, and interactions require login.
 
 ```bash
 bili status                    # Check if logged in (exit 0 = yes, 1 = no)
@@ -86,6 +86,10 @@ Requires a local `ffmpeg` binary for DASH remux.
 # Download the best available video stream (accepts BV ID or full URL)
 bili download BV1ABcsztEcY
 bili download https://www.bilibili.com/video/BV1ABcsztEcY
+
+# Download one bangumi episode (requires saved login credentials)
+bili download ep693249
+bili download https://www.bilibili.com/bangumi/play/ep693249
 
 # Options
 bili download BV1ABcsztEcY --container mp4   # Output mp4 instead of mkv

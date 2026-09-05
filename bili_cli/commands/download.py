@@ -9,6 +9,7 @@ import tempfile
 
 import click
 
+from ..exceptions import InvalidBvidError
 from . import common
 
 
@@ -53,29 +54,47 @@ def _resolve_output_path(output: str | None, default_filename: str) -> str:
 
 
 @click.command()
-@click.argument("bv_or_url")
+@click.argument("video_or_episode")
 @click.option("--output", "-o", default=None, type=click.Path(), help="输出文件或目录。")
-@click.option("--page", default=1, type=click.IntRange(1, None), help="分P 页码（默认 1）。")
+@click.option("--page", default=1, type=click.IntRange(1, None), help="普通视频分 P 页码（默认 1）。")
 @click.option("--container", default="mkv", type=click.Choice(["mkv", "mp4"]), help="DASH 合并容器（默认 mkv）。")
 @click.option("--keep-raw", is_flag=True, help="保留 DASH 原始音视频流文件。")
-def download(bv_or_url: str, output: str | None, page: int, container: str, keep_raw: bool):
-    """下载视频文件，DASH 流会以无转码方式封装输出。"""
+def download(video_or_episode: str, output: str | None, page: int, container: str, keep_raw: bool):
+    """下载普通视频或单集番剧，DASH 流会以无转码方式封装输出。"""
     from .. import client
 
-    bvid = common.extract_bvid_or_exit(bv_or_url)
-    cred = common.get_credential(mode="optional")
+    try:
+        target_kind, target_id = client.extract_download_target(video_or_episode)
+    except (InvalidBvidError, ValueError) as e:
+        common.exit_error(str(e), code="invalid_input")
 
-    info = common.run_or_exit(client.get_video_info(bvid, credential=cred), "获取视频信息")
-    title = info.get("title", bvid)
+    if target_kind == "episode" and page != 1:
+        common.exit_error("番剧单集不支持 --page；请直接传入对应的 ep 号或单集 URL", code="invalid_input")
+
+    cred = common.get_credential(mode="optional")
+    if target_kind == "episode":
+        if cred is None:
+            common.exit_error("番剧下载需要登录。请先执行 bili login。", code="not_authenticated")
+        common.console.print("[dim]获取番剧下载信息...[/dim]")
+        info, streams = common.run_or_exit(
+            client.get_episode_download(int(target_id), credential=cred),
+            "获取番剧下载信息",
+        )
+    else:
+        bvid = str(target_id)
+        info = common.run_or_exit(client.get_video_info(bvid, credential=cred), "获取视频信息")
+
+    title = info.get("title", str(target_id))
     duration = info.get("duration", 0)
     stem = _build_stem(title, page)
 
     common.console.print(f"[bold]🎬 {title}[/bold]  ({common.format_duration(duration)})")
-    common.console.print("[dim]获取下载流地址...[/dim]")
-    streams = common.run_or_exit(
-        client.get_video_download_streams(bvid, page=page, credential=cred),
-        "获取下载流",
-    )
+    if target_kind == "video":
+        common.console.print("[dim]获取下载流地址...[/dim]")
+        streams = common.run_or_exit(
+            client.get_video_download_streams(bvid, page=page, credential=cred),
+            "获取下载流",
+        )
 
     if streams["kind"] == "progressive":
         default_name = f"{stem}{streams.get('ext', '.mp4')}"
